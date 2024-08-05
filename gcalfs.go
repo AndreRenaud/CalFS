@@ -1,3 +1,4 @@
+// See https://developers.google.com/calendar/api/v3/reference/events/list for details
 package main
 
 import (
@@ -16,8 +17,9 @@ import (
 )
 
 type gcalImpl struct {
-	srv    *calendar.Service
-	events []*calendar.Event
+	calendarID string
+	srv        *calendar.Service
+	years      []int
 }
 
 // Retrieve a token, saves the token, then returns the generated client.
@@ -94,31 +96,39 @@ func OpenGCal(credentialsFile string) (CalendarInterface, error) {
 		return nil, err
 	}
 
-	//call := srv.Events.List("primary").ShowDeleted(false)
-	//events, err := call.Do()
-	////if err != nil {
-	//return nil, err
-	//}
+	calendarID := "primary"
 
-	call := srv.Events.List("primary").ShowDeleted(false)
-	//call := service.Events.List(calendarID).SingleEvents(true)
-	events, err := call.Do()
-	if err != nil {
-		return nil, err
-	}
-	var allEvents []*calendar.Event
-	allEvents = append(allEvents, events.Items...)
-	for events.NextPageToken != "" {
-		nextPageToken := events.NextPageToken
-		call := call.PageToken(nextPageToken)
-		events, err = call.Do()
+	call := srv.Events.List(calendarID).ShowDeleted(false).Fields("items(start)", "nextPageToken")
+	years := map[int]struct{}{}
+	for {
+		events, err := call.Do()
 		if err != nil {
 			return nil, err
 		}
-		allEvents = append(allEvents, events.Items...)
+		if events.NextPageToken == "" {
+			break
+		}
+		call = call.PageToken(events.NextPageToken)
+
+		for _, e := range events.Items {
+			t := eventTime(e.Start)
+			if t.IsZero() {
+				continue
+			}
+			years[t.Year()] = struct{}{}
+		}
 	}
 
-	return &gcalImpl{srv: srv, events: allEvents}, nil
+	retval := make([]int, 0, len(years))
+	for y := range years {
+		retval = append(retval, y)
+	}
+
+	return &gcalImpl{
+		calendarID: calendarID,
+		srv:        srv,
+		years:      retval,
+	}, nil
 }
 
 func eventTime(ev *calendar.EventDateTime) time.Time {
@@ -140,33 +150,33 @@ func eventTime(ev *calendar.EventDateTime) time.Time {
 }
 
 func (gc *gcalImpl) Years() []int {
-	years := map[int]struct{}{}
-	for _, e := range gc.events {
-		t := eventTime(e.Start)
-		if t.IsZero() {
-			continue
-		}
-		years[t.Year()] = struct{}{}
-	}
-
-	retval := make([]int, 0, len(years))
-	for y := range years {
-		retval = append(retval, y)
-	}
-	return retval
+	return gc.years
 }
 
 func (gc *gcalImpl) Months(year int) []time.Month {
 	months := map[time.Month]struct{}{}
-	for _, e := range gc.events {
-		t := eventTime(e.Start)
-		if t.IsZero() {
-			continue
+	timeMin := time.Date(year, 1, 1, 0, 0, 0, 0, time.Local)
+	timeMax := time.Date(year, 12, 31, 23, 59, 59, 0, time.Local)
+	call := gc.srv.Events.List(gc.calendarID).ShowDeleted(false).TimeMin(timeMin.Format(time.RFC3339)).TimeMax(timeMax.Format(time.RFC3339))
+	for {
+		events, err := call.Do()
+		if err != nil {
+			break
 		}
-		if t.Year() != year {
-			continue
+		for _, e := range events.Items {
+			t := eventTime(e.Start)
+			if t.IsZero() {
+				continue
+			}
+			if t.Year() != year {
+				continue
+			}
+			months[t.Month()] = struct{}{}
 		}
-		months[t.Month()] = struct{}{}
+		if events.NextPageToken == "" {
+			break
+		}
+		call = call.PageToken(events.NextPageToken)
 	}
 	retval := make([]time.Month, 0, len(months))
 	for m := range months {
@@ -177,15 +187,28 @@ func (gc *gcalImpl) Months(year int) []time.Month {
 
 func (gc *gcalImpl) Days(year int, month time.Month) []int {
 	days := map[int]struct{}{}
-	for _, e := range gc.events {
-		t := eventTime(e.Start)
-		if t.IsZero() {
-			continue
+	timeMin := time.Date(year, month, 1, 0, 0, 0, 0, time.Local)
+	timeMax := time.Date(year, month+1, 1, 0, 0, 0, 0, time.Local)
+	call := gc.srv.Events.List(gc.calendarID).ShowDeleted(false).TimeMin(timeMin.Format(time.RFC3339)).TimeMax(timeMax.Format(time.RFC3339))
+	for {
+		events, err := call.Do()
+		if err != nil {
+			break
 		}
-		if t.Year() != year || t.Month() != month {
-			continue
+		for _, e := range events.Items {
+			t := eventTime(e.Start)
+			if t.IsZero() {
+				continue
+			}
+			if t.Year() != year {
+				continue
+			}
+			days[t.Day()] = struct{}{}
 		}
-		days[t.Day()] = struct{}{}
+		if events.NextPageToken == "" {
+			break
+		}
+		call = call.PageToken(events.NextPageToken)
 	}
 	retval := make([]int, 0, len(days))
 	for d := range days {
@@ -196,20 +219,30 @@ func (gc *gcalImpl) Days(year int, month time.Month) []int {
 
 func (gc *gcalImpl) Entries(day time.Time) []CalendarEntry {
 	var retval []CalendarEntry
-	for _, e := range gc.events {
-		t := eventTime(e.Start)
-		if t.IsZero() {
-			continue
+	timeMin := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.Local)
+	timeMax := time.Date(day.Year(), day.Month(), day.Day(), 23, 59, 59, 0, time.Local)
+	call := gc.srv.Events.List(gc.calendarID).ShowDeleted(false).TimeMin(timeMin.Format(time.RFC3339)).TimeMax(timeMax.Format(time.RFC3339))
+	for {
+		events, err := call.Do()
+		if err != nil {
+			break
 		}
-		if t.Year() != day.Year() || t.Month() != day.Month() || t.Day() != day.Day() {
-			continue
+		for _, e := range events.Items {
+			t := eventTime(e.Start)
+			if t.IsZero() {
+				continue
+			}
+			retval = append(retval, CalendarEntry{
+				Start:       t,
+				End:         eventTime(e.End),
+				Summary:     e.Summary,
+				Description: e.Description,
+			})
 		}
-		retval = append(retval, CalendarEntry{
-			Start:       t,
-			End:         eventTime(e.End),
-			Summary:     e.Summary,
-			Description: e.Description,
-		})
+		if events.NextPageToken == "" {
+			break
+		}
+		call = call.PageToken(events.NextPageToken)
 	}
 	return retval
 }

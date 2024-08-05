@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"fmt"
 	"log"
 	"sort"
@@ -63,8 +64,15 @@ type icalDayNode struct {
 
 // We have no files more granular than a day, so we convert timestamps
 // into simple inode numbers
-func timeToInode(t time.Time) uint64 {
-	return uint64(t.Unix()) / (24 * 60 * 60)
+func timeToInode(t time.Time, extra string) uint64 {
+	base := uint64(t.Unix())
+
+	hash := md5.Sum([]byte(extra))
+	for _, h := range hash {
+		base += uint64(h)
+	}
+
+	return base
 }
 
 func (icn *CalendarRootNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
@@ -99,7 +107,7 @@ func (icn *CalendarRootNode) Lookup(ctx context.Context, name string, out *fuse.
 
 	stable := fs.StableAttr{
 		Mode: fuse.S_IFDIR,
-		Ino:  timeToInode(entryTime),
+		Ino:  timeToInode(entryTime, name),
 	}
 	operations := &icalYearNode{cal: icn.cal, year: year}
 	child := icn.Inode.NewInode(ctx, operations, stable)
@@ -138,7 +146,7 @@ func (icy *icalYearNode) Lookup(ctx context.Context, name string, out *fuse.Entr
 
 	stable := fs.StableAttr{
 		Mode: fuse.S_IFDIR,
-		Ino:  timeToInode(entryTime),
+		Ino:  timeToInode(entryTime, name),
 	}
 	operations := &icalMonthNode{cal: icy.cal, year: icy.year, month: month.Month()}
 	child := icy.Inode.NewInode(ctx, operations, stable)
@@ -172,7 +180,7 @@ func (icm *icalMonthNode) Lookup(ctx context.Context, name string, out *fuse.Ent
 	out.AttrValid |= fuse.FATTR_ATIME | fuse.FATTR_CTIME | fuse.FATTR_MTIME
 	stable := fs.StableAttr{
 		Mode: fuse.S_IFREG,
-		Ino:  timeToInode(entryTime),
+		Ino:  timeToInode(entryTime, name),
 	}
 	operations := &icalDayNode{cal: icm.cal, year: icm.year, month: icm.month, day: day}
 	child := icm.Inode.NewInode(ctx, operations, stable)
