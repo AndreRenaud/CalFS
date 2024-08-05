@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"time"
 
 	//"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -26,6 +27,9 @@ func main() {
 	} else {
 		err = fmt.Errorf("no supported calendar interface supplied")
 	}
+
+	cal = NewCache(cal, time.Minute)
+
 	root := &CalendarRootNode{cal: cal}
 
 	if err != nil {
