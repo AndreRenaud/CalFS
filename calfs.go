@@ -61,6 +61,12 @@ type icalDayNode struct {
 	day   int
 }
 
+// We have no files more granular than a day, so we convert timestamps
+// into simple inode numbers
+func timeToInode(t time.Time) uint64 {
+	return uint64(t.Unix()) / (24 * 60 * 60)
+}
+
 func (icn *CalendarRootNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	years := icn.cal.Years()
 	r := make([]fuse.DirEntry, 0, len(years))
@@ -85,24 +91,18 @@ func (icn *CalendarRootNode) Lookup(ctx context.Context, name string, out *fuse.
 	if n < 0 {
 		return nil, syscall.ENOENT
 	}
+	entryTime := time.Date(year, 1, 1, 0, 0, 0, 0, time.Local)
+	out.Mtime = uint64(entryTime.Unix())
+	out.Atime = uint64(entryTime.Unix())
+	out.Ctime = uint64(entryTime.Unix())
+	out.AttrValid |= fuse.FATTR_ATIME | fuse.FATTR_CTIME | fuse.FATTR_MTIME
 
 	stable := fs.StableAttr{
 		Mode: fuse.S_IFDIR,
-		// The child inode is identified by its Inode number.
-		// If multiple concurrent lookups try to find the same
-		// inode, they are deduplicated on this key.
-		Ino: uint64(year),
+		Ino:  timeToInode(entryTime),
 	}
 	operations := &icalYearNode{cal: icn.cal, year: year}
 	child := icn.Inode.NewInode(ctx, operations, stable)
-
-	if out != nil {
-		t := time.Date(year, 1, 1, 0, 0, 0, 0, time.Local)
-		out.Mtime = uint64(t.Unix())
-		out.Atime = uint64(t.Unix())
-		out.Ctime = uint64(t.Unix())
-		out.AttrValid |= fuse.FATTR_ATIME | fuse.FATTR_CTIME | fuse.FATTR_MTIME
-	}
 
 	return child, fs.OK
 }
@@ -130,25 +130,18 @@ func (icy *icalYearNode) Lookup(ctx context.Context, name string, out *fuse.Entr
 		log.Printf("Cannot parse %s: %s", name, err)
 		return nil, fs.ENOATTR
 	}
-	log.Printf("month: %s", month)
-	// TODO: Do something correct here
+	entryTime := time.Date(icy.year, month.Month(), 1, 0, 0, 0, 0, time.Local)
+	out.Mtime = uint64(entryTime.Unix())
+	out.Atime = uint64(entryTime.Unix())
+	out.Ctime = uint64(entryTime.Unix())
+	out.AttrValid |= fuse.FATTR_ATIME | fuse.FATTR_CTIME | fuse.FATTR_MTIME
+
 	stable := fs.StableAttr{
 		Mode: fuse.S_IFDIR,
-		// The child inode is identified by its Inode number.
-		// If multiple concurrent lookups try to find the same
-		// inode, they are deduplicated on this key.
-		Ino: 0, // TODO
+		Ino:  timeToInode(entryTime),
 	}
 	operations := &icalMonthNode{cal: icy.cal, year: icy.year, month: month.Month()}
 	child := icy.Inode.NewInode(ctx, operations, stable)
-	if out != nil {
-		t := time.Date(icy.year, month.Month(), 1, 0, 0, 0, 0, time.Local)
-		out.Mtime = uint64(t.Unix())
-		out.Atime = uint64(t.Unix())
-		out.Ctime = uint64(t.Unix())
-		out.AttrValid |= fuse.FATTR_ATIME | fuse.FATTR_CTIME | fuse.FATTR_MTIME
-	}
-
 	return child, fs.OK
 }
 
@@ -172,24 +165,17 @@ func (icm *icalMonthNode) Lookup(ctx context.Context, name string, out *fuse.Ent
 		log.Printf("Cannot parse %s: %s", name, err)
 		return nil, fs.ENOATTR
 	}
-	// TODO: Do something correct here
+	entryTime := time.Date(icm.year, icm.month, day, 0, 0, 0, 0, time.Local)
+	out.Mtime = uint64(entryTime.Unix())
+	out.Atime = uint64(entryTime.Unix())
+	out.Ctime = uint64(entryTime.Unix())
+	out.AttrValid |= fuse.FATTR_ATIME | fuse.FATTR_CTIME | fuse.FATTR_MTIME
 	stable := fs.StableAttr{
 		Mode: fuse.S_IFREG,
-		// The child inode is identified by its Inode number.
-		// If multiple concurrent lookups try to find the same
-		// inode, they are deduplicated on this key.
-		Ino: 0, // TODO
+		Ino:  timeToInode(entryTime),
 	}
 	operations := &icalDayNode{cal: icm.cal, year: icm.year, month: icm.month, day: day}
 	child := icm.Inode.NewInode(ctx, operations, stable)
-
-	if out != nil {
-		t := time.Date(icm.year, icm.month, day, 0, 0, 0, 0, time.Local)
-		out.Mtime = uint64(t.Unix())
-		out.Atime = uint64(t.Unix())
-		out.Ctime = uint64(t.Unix())
-		out.AttrValid |= fuse.FATTR_ATIME | fuse.FATTR_CTIME | fuse.FATTR_MTIME
-	}
 
 	return child, fs.OK
 }
