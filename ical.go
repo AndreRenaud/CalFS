@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/apognu/gocal"
@@ -69,19 +71,32 @@ func (ic *icalImpl) Entries(day time.Time) []CalendarEntry {
 }
 
 func OpenICal(icalFile string) (CalendarInterface, error) {
-	f, err := os.Open(icalFile)
-	if err != nil {
-		return nil, fmt.Errorf("cannot open %s: %s", icalFile, err)
-	}
+	var cal *gocal.Gocal
+	if strings.HasPrefix(icalFile, "http://") || strings.HasPrefix(icalFile, "https://") {
+		resp, err := http.Get(icalFile)
+		defer resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("bad response to %s: %d", icalFile, resp.StatusCode)
+		}
+		cal = gocal.NewParser(resp.Body)
+	} else {
+		f, err := os.Open(icalFile)
+		if err != nil {
+			return nil, fmt.Errorf("cannot open %s: %s", icalFile, err)
+		}
+		defer f.Close()
 
-	c := gocal.NewParser(f)
-	if err := c.Parse(); err != nil {
-		f.Close()
+		cal = gocal.NewParser(f)
+	}
+	if err := cal.Parse(); err != nil {
 		return nil, err
 	}
 
 	yearsSeen := map[int]struct{}{}
-	for _, e := range c.Events {
+	for _, e := range cal.Events {
 		yearsSeen[e.Start.Year()] = struct{}{}
 	}
 
@@ -91,5 +106,5 @@ func OpenICal(icalFile string) (CalendarInterface, error) {
 	}
 	sort.Ints(years)
 
-	return &icalImpl{cal: c, years: years}, nil
+	return &icalImpl{cal: cal, years: years}, nil
 }
